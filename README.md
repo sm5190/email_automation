@@ -9,6 +9,10 @@ It accepts two uploaded PDF files through an n8n form:
 
 The workflow extracts and parses both files, combines the data, uses an AI agent to generate personalized outreach emails, creates Gmail drafts with the resume attached, logs the activity to Google Sheets, and waits between batches to control sending volume. 
 
+## Architecture
+<img width="1741" height="562" alt="image" src="https://github.com/user-attachments/assets/ccb878bc-b1dd-4ea1-9a46-c6b92532d934" />
+
+
 ## Features
 
 - Upload contact list and resume through an n8n form

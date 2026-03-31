@@ -1,0 +1,527 @@
+{
+  "name": "Email_automation",
+  "nodes": [
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "Upload_the_email_file",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        -240,
+        0
+      ],
+      "id": "237f5af4-6ade-4ed9-a15a-9647e7e89749",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "jsCode": "function clean(value) {\n  if (value === null || value === undefined) return \"\";\n  return String(value).replace(/\\s+/g, \" \").trim();\n}\n\nfunction parseTable(text) {\n  const lines = text\n    .split(\"\\n\")\n    .map(line => clean(line))\n    .filter(line => line.length > 0);\n\n  if (lines.length === 0) return [];\n\n  // First line is header\n  const headerLine = lines[0];\n  const headers = headerLine.split(/\\s+/).map(h => clean(h));\n\n  const rows = [];\n\n  for (let i = 1; i < lines.length; i++) {\n    const line = lines[i];\n\n    // Find email first\n    const emailMatch = line.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/i);\n    if (!emailMatch) continue;\n\n    const email = clean(emailMatch[0]);\n    const beforeEmail = clean(line.slice(0, emailMatch.index));\n    const afterEmail = clean(line.slice(emailMatch.index + email.length));\n\n    const parts = afterEmail.split(/\\s+/).filter(Boolean);\n\n    let company = \"\";\n    let is_recruiter = \"\";\n    let done = \"\";\n\n    if (parts.length >= 3) {\n      done = parts[parts.length - 1];\n      is_recruiter = parts[parts.length - 2];\n      company = parts.slice(0, parts.length - 2).join(\" \");\n    } else if (parts.length === 2) {\n      is_recruiter = parts[0];\n      done = parts[1];\n    } else if (parts.length === 1) {\n      company = parts[0];\n    }\n\n    rows.push({\n      name: beforeEmail,\n      email,\n      company,\n      is_recruiter,\n      done,\n    });\n  }\n\n  return rows;\n}\n\nconst text = $json.text || \"\";\nconst parsedRows = parseTable(text);\n\nreturn parsedRows.map(row => ({ json: row }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        0
+      ],
+      "id": "8b6a0a60-a805-469a-bd95-e840ba3d6cbe",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "Upload_your_resume",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        -256,
+        352
+      ],
+      "id": "90fa9579-1faa-40d2-9bb4-4db0e2acdf66",
+      "name": "Extract from File1"
+    },
+    {
+      "parameters": {
+        "jsCode": "function clean(value) {\n  if (value === null || value === undefined) return \"\";\n  return String(value)\n    .replace(/\\u2022/g, \"•\")\n    .replace(/[ \\t]+/g, \" \")\n    .replace(/\\n{2,}/g, \"\\n\")\n    .trim();\n}\n\nfunction splitLines(text) {\n  return clean(text)\n    .split(\"\\n\")\n    .map(line => line.trim())\n    .filter(Boolean);\n}\n\nfunction extractEmail(text) {\n  const m = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}/i);\n  return m ? m[0] : \"\";\n}\n\nfunction extractPhone(text) {\n  const m = text.match(/(\\+?\\d{1,2}[-.\\s]?)?(\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4})/);\n  return m ? m[0] : \"\";\n}\n\nfunction extractLinks(headerLine) {\n  const links = {};\n  const parts = headerLine.split(\"|\").map(s => s.trim());\n\n  for (const part of parts) {\n    const lower = part.toLowerCase();\n\n    if (lower.includes(\"linkedin\")) {\n      links.linkedin = part.split(\":\").slice(1).join(\":\").trim() || part;\n    } else if (lower.includes(\"portfolio\")) {\n      links.portfolio = part.split(\":\").slice(1).join(\":\").trim() || part;\n    } else if (lower.includes(\"github\")) {\n      links.github = part.split(\":\").slice(1).join(\":\").trim() || part;\n    }\n  }\n\n  return links;\n}\n\nfunction getSectionIndexes(lines) {\n  const knownSections = [\n    \"education\",\n    \"experience\",\n    \"projects\",\n    \"technical skills\",\n    \"skills\",\n    \"publications\",\n    \"certifications\",\n    \"leadership\",\n    \"awards\"\n  ];\n\n  const indexes = [];\n  for (let i = 0; i < lines.length; i++) {\n    const lower = lines[i].toLowerCase();\n    if (knownSections.includes(lower)) {\n      indexes.push({ name: lower, index: i });\n    }\n  }\n  return indexes;\n}\n\nfunction sliceSections(lines) {\n  const indexes = getSectionIndexes(lines);\n  const sections = {};\n\n  for (let i = 0; i < indexes.length; i++) {\n    const current = indexes[i];\n    const next = indexes[i + 1];\n    const start = current.index + 1;\n    const end = next ? next.index : lines.length;\n    sections[current.name] = lines.slice(start, end);\n  }\n\n  return sections;\n}\n\nfunction looksLikeDateRange(line) {\n  return /([A-Z][a-z]{2,}\\.?\\s+\\d{4}|\\d{4})\\s*[–-]\\s*(Present|[A-Z][a-z]{2,}\\.?\\s+\\d{4}|\\d{4})/i.test(line);\n}\n\nfunction parseEducation(lines) {\n  const entries = [];\n  let i = 0;\n\n  while (i < lines.length) {\n    const school = lines[i] || \"\";\n    const degreeLine = lines[i + 1] || \"\";\n\n    if (!school) {\n      i++;\n      continue;\n    }\n\n    let location = \"\";\n    let dates = \"\";\n\n    const schoolDateMatch = school.match(/(.+?)\\s+([A-Z][a-z]{2,}\\.?\\s+\\d{4}\\s+[–-]\\s+(Present|[A-Z][a-z]{2,}\\.?\\s+\\d{4}))$/);\n    let schoolName = school;\n\n    if (schoolDateMatch) {\n      schoolName = schoolDateMatch[1].trim();\n      dates = schoolDateMatch[2].trim();\n    }\n\n    let degree = degreeLine;\n    let gpa = \"\";\n\n    const gpaMatch = degreeLine.match(/\\((?:GPA|CGPA):\\s*([^)]+)\\)/i);\n    if (gpaMatch) gpa = gpaMatch[1].trim();\n\n    const locationMatch = degreeLine.match(/\\)\\s+(.+)$/);\n    if (locationMatch) {\n      location = locationMatch[1].trim();\n    }\n\n    entries.push({\n      institution: schoolName,\n      degree: degree.trim(),\n      gpa,\n      dates,\n      location\n    });\n\n    i += 2;\n  }\n\n  return entries.filter(e => e.institution);\n}\n\nfunction isExperienceHeader(line) {\n  return looksLikeDateRange(line);\n}\n\nfunction splitTitleAndDates(line) {\n  const match = line.match(/(.+?)\\s+((?:[A-Z][a-z]{2,}\\.?\\s+\\d{4}|\\d{4})\\s*[–-]\\s*(?:Present|[A-Z][a-z]{2,}\\.?\\s+\\d{4}|\\d{4}))$/i);\n  if (!match) {\n    return {\n      title: clean(line),\n      dates: \"\"\n    };\n  }\n\n  return {\n    title: clean(match[1]),\n    dates: clean(match[2])\n  };\n}\n\nfunction splitCompanyAndLocation(line) {\n  const remoteMatch = line.match(/(.+?)\\s+(Remote)$/i);\n  if (remoteMatch) {\n    return {\n      company: clean(remoteMatch[1]),\n      location: clean(remoteMatch[2])\n    };\n  }\n\n  const locationMatch = line.match(/(.+?)\\s+([A-Z][a-zA-Z.\\s]+,\\s*[A-Z]{2}|[A-Z][a-zA-Z.\\s]+,\\s*[A-Z][a-z]+)$/);\n  if (locationMatch) {\n    return {\n      company: clean(locationMatch[1]),\n      location: clean(locationMatch[2])\n    };\n  }\n\n  return {\n    company: clean(line),\n    location: \"\"\n  };\n}\n\nfunction parseExperience(lines) {\n  const entries = [];\n  let i = 0;\n\n  while (i < lines.length) {\n    const headerLine = lines[i];\n\n    if (!headerLine || !isExperienceHeader(headerLine)) {\n      i++;\n      continue;\n    }\n\n    const { title, dates } = splitTitleAndDates(headerLine);\n\n    const companyLine = lines[i + 1] || \"\";\n    const { company, location } = splitCompanyAndLocation(companyLine);\n\n    i += 2;\n\n    const bullets = [];\n    while (i < lines.length) {\n      const current = lines[i];\n\n      // Next experience starts here\n      if (isExperienceHeader(current)) {\n        break;\n      }\n\n      if (current.startsWith(\"•\") || current.startsWith(\"-\") || current.startsWith(\"*\")) {\n        let bullet = current.replace(/^[•\\-*]\\s*/, \"\").trim();\n        i++;\n\n        while (i < lines.length) {\n          const next = lines[i];\n\n          if (isExperienceHeader(next)) {\n            break;\n          }\n\n          if (next.startsWith(\"•\") || next.startsWith(\"-\") || next.startsWith(\"*\")) {\n            break;\n          }\n\n          bullet += \" \" + next;\n          i++;\n        }\n\n        bullets.push(clean(bullet));\n      } else {\n        i++;\n      }\n    }\n\n    entries.push({\n      title,\n      company,\n      location,\n      dates,\n      bullets\n    });\n  }\n\n  return entries.filter(e => e.title);\n}\n\nfunction parseProjectHeader(line) {\n  const parts = line.split(\"|\").map(s => s.trim()).filter(Boolean);\n\n  if (parts.length === 0) {\n    return { name: clean(line), tech_stack: \"\", links: [] };\n  }\n\n  const name = parts[0];\n  const links = [];\n  const techParts = [];\n\n  for (let i = 1; i < parts.length; i++) {\n    const p = parts[i];\n    const lower = p.toLowerCase();\n\n    if (\n      lower.includes(\"github\") ||\n      lower.includes(\"demo\") ||\n      lower.includes(\"link\") ||\n      lower.includes(\"portfolio\")\n    ) {\n      links.push(p);\n    } else {\n      techParts.push(p);\n    }\n  }\n\n  return {\n    name: clean(name),\n    tech_stack: clean(techParts.join(\", \")),\n    links\n  };\n}\n\nfunction parseProjects(lines) {\n  const entries = [];\n  let i = 0;\n\n  while (i < lines.length) {\n    const line = lines[i];\n\n    if (!line) {\n      i++;\n      continue;\n    }\n\n    if (line.startsWith(\"•\") || line.startsWith(\"-\") || line.startsWith(\"*\")) {\n      i++;\n      continue;\n    }\n\n    const header = parseProjectHeader(line);\n    i++;\n\n    const bullets = [];\n    while (i < lines.length) {\n      const current = lines[i];\n\n      if (!current.startsWith(\"•\") && !current.startsWith(\"-\") && !current.startsWith(\"*\")) {\n        break;\n      }\n\n      let bullet = current.replace(/^[•\\-*]\\s*/, \"\").trim();\n      i++;\n\n      while (i < lines.length) {\n        const next = lines[i];\n\n        if (next.startsWith(\"•\") || next.startsWith(\"-\") || next.startsWith(\"*\")) {\n          break;\n        }\n\n        if (next.includes(\"|\")) {\n          break;\n        }\n\n        bullet += \" \" + next;\n        i++;\n      }\n\n      bullets.push(clean(bullet));\n    }\n\n    entries.push({\n      name: header.name,\n      tech_stack: header.tech_stack,\n      links: header.links,\n      bullets\n    });\n  }\n\n  return entries.filter(e => e.name);\n}\n\nfunction parseSkills(lines) {\n  const skills = {};\n  for (const line of lines) {\n    if (!line.includes(\":\")) continue;\n    const [key, ...rest] = line.split(\":\");\n    skills[clean(key).toLowerCase().replace(/\\s+/g, \"_\")] = clean(rest.join(\":\"));\n  }\n  return skills;\n}\n\nfunction parseResume(text) {\n  const lines = splitLines(text);\n\n  const name = lines[0] || \"\";\n  const headerLine = lines[1] || \"\";\n\n  const basics = {\n    name,\n    phone: extractPhone(headerLine),\n    email: extractEmail(headerLine),\n    ...extractLinks(headerLine)\n  };\n\n  const sections = sliceSections(lines);\n\n  return {\n    basics,\n    education: parseEducation(sections[\"education\"] || []),\n    experience: parseExperience(sections[\"experience\"] || []),\n    projects: parseProjects(sections[\"projects\"] || []),\n    skills: parseSkills(sections[\"technical skills\"] || sections[\"skills\"] || [])\n  };\n}\n\nconst text = $json.text || \"\";\nconst parsedResume = parseResume(text);\n\nreturn [\n  {\n    json: parsedResume\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -16,
+        352
+      ],
+      "id": "9cb29e87-4dd5-458a-8e86-effe9524e5b8",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Write a structured cold outreach email using the details below.\n\n### Recipient details:\nName: {{$json.name}}\nEmail: {{$json.email}}\nCompany: {{$json.company}}\n\n### Candidate details:\nName: {{$json.resume.basics.name}}\n\nEducation: {{JSON.stringify($json.resume.education)}}\n\nExperience: {{JSON.stringify($json.resume.experience)}}\n\nProjects: {{JSON.stringify($json.resume.projects)}}\n\nSkills: {{JSON.stringify($json.resume.skills)}}\n\n---\n\n### Instructions:\n\nThe email MUST follow this structure:\n\nParagraph 1 (Introduction):\n- Clearly state the candidate’s name\n- Mention that they graduated with a Master’s in Computer Science from Virginia Tech\n- Mention their current role as a Full Stack Software Engineer at Mitra US Computer Solutions, or most recent relevant role if needed\n- Keep this crisp, direct, and professional\n\nParagraph 2 (Work & Strengths):\n- Summarize 2 to 3 of the strongest and most relevant experiences\n- Prioritize these themes:\n  - backend engineering\n  - distributed systems\n  - cloud-native infrastructure\n  - production AI / LLM systems\n  - agentic AI\n  - scalable data and platform engineering\n- Focus especially on experiences such as:\n  - productionizing a RAG system for medical report summarization and Q&A with LangChain, including prompt versioning, retrieval latency monitoring, and failure handling\n  - designing and deploying containerized backend microservices on Google Cloud using Node.js, TypeScript, Docker, GKE, API Gateway, and load balancing\n  - building Azure-deployed .NET backend systems and cross-system integrations across Greenhouse, WinTeam, and Checkr\n  - developing backend services for high-traffic systems, such as the exam-results platform serving 2M+ users\n  - designing AWS data pipelines with Spark, Airflow, S3, Athena, and EMR, along with Kubernetes-based deployment and production model delivery\n  - building a multi-agent resume and application assistant using LangChain, serverless infrastructure, and reliability safeguards\n- Emphasize qualitative impact, system reliability, scalability, and production ownership\n- Do NOT list everything from the resume specially quantifying metrics.\n- Be selective and synthesize the strongest signals into a coherent narrative\n\nParagraph 3 (Intent):\n- Express strong interest in opportunities at {{$json.company}}\n- Position the candidate as a fit for software engineering roles centered on backend systems, distributed infrastructure, cloud platforms, production AI, or agentic AI\n- Say they would be glad to share more about their background and experience\n- Mention they are available for immediate employment\n- Politely suggest a meeting or discussion\n- Avoid casual phrasing such as \"quick chat\"\n\n---\n\n### Style Guidance:\n- Tone should be polished, concise, confident, and respectful\n- The email should sound like it is written for an engineer with strong backend and systems depth, not a generic ML candidate\n- Emphasize real-world engineering, production ownership, scalability, reliability, observability, and cloud deployment\n- When mentioning AI experience, frame it as production AI systems work, not only model experimentation\n- If relevant, naturally include areas such as distributed systems, microservices, cloud infrastructure, CI/CD, observability, RAG systems, or agentic workflows\n- Avoid buzzword stuffing\n- Avoid exaggeration\n- Make the email sound personalized and technically credible\n\n---\n\n### Subject line:\n- Write a clear, professional subject line tailored to the company\n- Prefer formats like:\n  - Interest in Software Engineering Opportunities at [Company]\n  - Interest in Backend / Distributed Systems Opportunities at [Company]\n  - Interest in Production AI and Backend Engineering Roles at [Company]\n\n---\n-Always Start with greetings\n-Always end with signature\n---\n\n### Style Reference (IMPORTANT – follow tone, not exact wording):\n\nSubject: Interest in Software Engineering and Production AI Opportunities at [Company]\n\nBody:\nDear [Name],\n\nI hope you are doing well. My name is [Candidate Name], and I recently completed my Master’s in Computer Science at Virginia Tech. I am currently working as a Full Stack Software Engineer at Mitra US Computer Solutions, building backend systems and cross-platform integrations for production enterprise workflows.\n\nMy experience is centered on backend and distributed systems engineering, with additional depth in cloud platforms and production AI. My recent work has focused on building [concise, high-impact summary of systems/projects], particularly in [relevant domains]. I have worked on cloud-native microservices, high-traffic backend services, enterprise system integrations, and productionized RAG and agentic AI workflows, focusing on scalability, reliability, and end-to-end system ownership.\n\nI would welcome the opportunity to share more about my background and discuss roles at [Company] where my experience in backend engineering, cloud infrastructure, and AI-powered product systems may be relevant. I am available for immediate employment and would appreciate the opportunity to connect at your convenience.\n\nBest regards,\n[Candidate Name]\n\n---\n\nReturn ONLY valid JSON:\n{\n  \"subject\": \"...\",\n  \"body\": \"...\"\n}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "=You are an expert cold outreach email writer for software engineering roles, especially those involving backend engineering, distributed systems, cloud platforms, production AI, and agentic AI.\n\nThe candidate should be presented as a software engineer with strong backend and systems depth who has also built AI-powered production systems. Their profile is centered on scalable backend development, cloud-native services, distributed infrastructure, platform engineering, and real-world AI deployment, not on pure research or academic ML work.\n\nYour emails should feel structured, polished, technically credible, and professional. The tone should be confident, respectful, and concise, with the maturity of a strong engineering outreach email.\n\nRules:\n- Never include the candidate’s name in the subject line.\n- Never add em-dashes (\"—\")\n- Keep the subject short, professional, and role-focused.\n- Keep emails under 300 words.\n- Use exactly 3 clear paragraphs:\n  1. Introduction: who the candidate is, degree, and current role\n  2. Summary of relevant work and strengths\n  3. Intent: interest in opportunities, fit, and availability\n\n- The tone should be confident and respectful, not desperate or overly casual.\n- Avoid casual phrases like \"Would you be open to a quick chat?\"\n- Use direct and professional phrasing such as interest in discussing relevant opportunities or connecting at their convenience.\n\n- Do not use bullet points.\n- Do not list too many technologies or roles mechanically.\n- Do not fabricate any details.\n\n- IMPORTANT: Do not copy resume content verbatim.\n  - Use the resume only as a reference.\n  - Paraphrase and synthesize the experience into a natural and credible narrative.\n  - Prioritize technical meaning, ownership, and impact over exact wording.\n\nContent guidance:\n- Position the candidate primarily for:\n  - backend software engineering\n  - distributed systems\n  - cloud and platform engineering\n  - production AI / LLM systems\n  - agentic AI systems\n- The candidate should come across as an engineer who has built and shipped production systems across backend services, APIs, microservices, enterprise integrations, cloud infrastructure, and AI-enabled products.\n\n\nPrioritize the strongest signals from the resume, such as:\n- building cloud-native backend systems and microservices\n- designing scalable APIs and distributed services\n- deploying systems on GCP, Azure, and AWS\n- productionizing RAG, LLM, or agentic workflows with attention to latency, observability, and reliability\n- integrating enterprise systems and building robust backend workflows\n- working with data pipelines, platform engineering, containerization, and Kubernetes\n- owning systems with measurable improvements in performance, scalability, or reliability\n\nWriting style:\n- Clear, composed, and intentional\n- Slightly formal but still natural\n- Technically grounded, not buzzword-heavy\n- No fluff, no over-exaggeration\n- Sound like a serious engineer writing to another professional\n\nOutput constraints:\n- Return ONLY valid JSON\n- Format:\n{\n  \"subject\": \"...\",\n  \"body\": \"...\"\n}"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        896,
+        224
+      ],
+      "id": "640dcc9a-d46b-4e67-84f2-30fdd72d79ef",
+      "name": "AI Agent"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gpt-5-mini"
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        896,
+        432
+      ],
+      "id": "6d5c6e78-81f7-414b-a5c6-200ef8075e7f",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "uRjLrqjQuKWKJVsL",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const contacts = $input.all();\nconst resumeItems = $('Code in JavaScript1').all();\nconst formItem = $('On form submission').first();\n\nif (!contacts.length) {\n  throw new Error('No contacts found');\n}\n\nif (!resumeItems.length) {\n  throw new Error('No resume found');\n}\n\nif (!formItem) {\n  throw new Error('Form submission item not found');\n}\n\n// This is the uploaded resume binary from the form\nconst resumeBinary = formItem.binary?.['Upload_your_resume'];\n\nif (!resumeBinary) {\n  throw new Error('Binary field \"Upload your resume\" not found on form submission');\n}\n\nconst resume = resumeItems[0].json;\n\n// test batch: first 3 only\nreturn contacts.map(contact => ({\n  json: {\n    ...contact.json,\n    resume\n  },\n  binary: {\n    resume_pdf: resumeBinary\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        208
+      ],
+      "id": "4d6bc8ec-d39c-4e87-9193-3123412658ee",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "resource": "draft",
+        "subject": "={{ $json.output.subject }}",
+        "message": "={{ $json.output.body }}",
+        "options": {
+          "attachmentsUi": {
+            "attachmentsBinary": [
+              {
+                "property": "Upload_your_resume"
+              }
+            ]
+          },
+          "sendTo": "={{ $('Code in JavaScript2').item.json.email }}"
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1392,
+        224
+      ],
+      "id": "30362bb5-ab7d-4dbb-af90-2ec79414f74a",
+      "name": "Create a draft",
+      "webhookId": "19a9ee86-23f2-46f8-a0bb-87c5e30861a7",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "QLjtcOyl8Q04IJf5",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"subject\": \"string\",\n  \"body\": \"string\"\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        1040,
+        432
+      ],
+      "id": "ad8be4b3-9ee6-4553-bd4f-5ec27224e0ae",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "useDataOfInput": "={{ 1 }}"
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        240,
+        208
+      ],
+      "id": "b94fe9aa-ab35-40a4-8f99-46e188623664",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1e-9ylNRKOXKJfZxrh8iXQMQFsWivDD-kwOUofTCrxTQ",
+          "mode": "list",
+          "cachedResultName": "N8N Workflow",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1e-9ylNRKOXKJfZxrh8iXQMQFsWivDD-kwOUofTCrxTQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Recruiter",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1e-9ylNRKOXKJfZxrh8iXQMQFsWivDD-kwOUofTCrxTQ/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "name": "={{ $('Code in JavaScript2').item.json.name }}",
+            "email": "={{ $('Code in JavaScript2').item.json.email }}",
+            "company": "={{ $('Code in JavaScript2').item.json.company }}",
+            "mailed": "Yes",
+            "response_received": "No"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "name",
+              "displayName": "name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "mailed",
+              "displayName": "mailed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "response_received",
+              "displayName": "response_received",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1584,
+        224
+      ],
+      "id": "40a64a1f-37e7-4d8c-b9b9-ac71a435345e",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "CfunfCUfTt4XNfJK",
+          "name": "Google Sheets OAuth2 API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "formTitle": "File upload",
+        "formDescription": "Upload the file which contains the details of the person!",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Upload the email file",
+              "fieldType": "file"
+            },
+            {
+              "fieldLabel": "Upload your resume",
+              "fieldType": "file"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [
+        -544,
+        192
+      ],
+      "id": "9b82f5a7-52d2-4b6a-8c55-bed643b47e2d",
+      "name": "On form submission",
+      "webhookId": "6b7f33c5-f254-43ff-9480-19cba2716a69"
+    },
+    {
+      "parameters": {
+        "jsCode": "const currentItems = $input.all();\nconst formItem = $items(\"On form submission\")[0];\n\nreturn currentItems.map(item => ({\n  json: item.json,\n  binary: formItem.binary?.Upload_your_resume\n    ? { Upload_your_resume: formItem.binary.Upload_your_resume }\n    : {}\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1216,
+        224
+      ],
+      "id": "fc5eb6bd-ec70-4585-995f-a5da05743087",
+      "name": "Code in JavaScript3"
+    },
+    {
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        624,
+        208
+      ],
+      "id": "869a47da-3acd-4d97-89d1-f04ca2ec048a",
+      "name": "Loop Over Items"
+    },
+    {
+      "parameters": {
+        "amount": 1,
+        "unit": "hours"
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1792,
+        224
+      ],
+      "id": "9bdecdaa-efef-45ad-abd0-9c720c216186",
+      "name": "Wait",
+      "webhookId": "3c2623ea-acbc-43f3-a10f-5c339bacf4d5"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create a draft": {
+      "main": [
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Extract from File1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript3": {
+      "main": [
+        [
+          {
+            "node": "Create a draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "b5c1c036-6ccb-46e3-9b32-2d25b542fd66",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "17ac43a5c7555331162dd73ccaa77d1d963e1eb0402070214098109080720e4a"
+  },
+  "id": "iD6hDHBkom7S79cr",
+  "tags": []
+}
